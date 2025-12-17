@@ -23,7 +23,23 @@ from .text_processor import preprocess, expand_with_synonyms
 
 
 # ============================================================
-# QUERY NORMALIZATION (FOR CSV + EVALUATION SAFETY)
+# ROLE → SKILL EXPANSION (🔥 HIGH IMPACT)
+# ============================================================
+
+ROLE_SKILL_MAP = {
+    "sales": ["communication", "negotiation", "customer", "persuasion"],
+    "customer support": ["communication", "english", "customer"],
+    "support": ["communication", "english", "customer"],
+    "product manager": ["jira", "confluence", "agile", "stakeholder"],
+    "data analyst": ["sql", "excel", "analytics"],
+    "business analyst": ["sql", "excel", "requirements"],
+    "software developer": ["programming", "coding"],
+    "developer": ["programming", "coding"],
+}
+
+
+# ============================================================
+# QUERY NORMALIZATION (CSV + EVALUATION SAFETY)
 # ============================================================
 
 def normalize_query(query: str) -> str:
@@ -32,7 +48,6 @@ def normalize_query(query: str) -> str:
     - lowercase
     - remove newlines
     - truncate length
-    - preserve semantic intent
     """
     q = query.lower()
     q = re.sub(r'\s+', ' ', q).strip()
@@ -56,7 +71,7 @@ DURATION_PATTERNS = [
     (r'(\d+)\s*(?:min|mins|minutes)',
      lambda m: (max(0, int(m.group(1)) - 5), int(m.group(1)) + 5)),
 
-    (r'(\d+)\s*(?:to|-)\s*(\d+)\s*hour',
+    (r'(\d+)\s*(?:to|-)\s*hour',
      lambda m: (int(m.group(1)) * 60, int(m.group(2)) * 60)),
 
     (r'(\d+)\s*hour',
@@ -175,6 +190,15 @@ def needs_balanced_results(query: str, required_types: List[str]) -> bool:
 def analyze_query(query: str) -> QueryInfo:
     processed_tokens = preprocess(query)
     expanded_tokens = expand_with_synonyms(processed_tokens)
+
+    # 🔥 Role-based semantic expansion
+    query_lower = query.lower()
+    for role, skills in ROLE_SKILL_MAP.items():
+        if role in query_lower:
+            expanded_tokens.extend(skills)
+
+    # Deduplicate tokens
+    expanded_tokens = list(set(expanded_tokens))
 
     duration_min, duration_max = extract_duration_constraint(query)
     required_types = extract_required_test_types(query)
