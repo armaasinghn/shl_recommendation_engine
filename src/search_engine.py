@@ -213,11 +213,6 @@ class AssessmentSearchEngine:
 
         return reasons
 
-
-# ============================================================
-# SINGLETON ACCESS
-# ============================================================
-
 _search_engine: Optional[AssessmentSearchEngine] = None
 
 
