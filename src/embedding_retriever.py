@@ -1,12 +1,12 @@
 """
-Embedding-Based Retriever
-==========================
-Uses sentence transformers for semantic search with FAISS vector store.
+Embedding-Based Retriever - Optimized
+======================================
+Enhanced blending strategy for better recall
 """
 
 import json
 import numpy as np
-from typing import List, Optional, Tuple
+from typing import List, Optional
 from pathlib import Path
 
 from sentence_transformers import SentenceTransformer
@@ -17,22 +17,13 @@ from .models import Assessment, RecommendationResult
 
 
 class EmbeddingRetriever:
-    """
-    Semantic search using sentence transformers and FAISS.
-    """
+    """Semantic search using sentence transformers and FAISS."""
     
     def __init__(
         self, 
         assessments_file: Optional[str] = None,
         model_name: str = 'all-MiniLM-L6-v2'
     ):
-        """
-        Initialize embedding retriever.
-        
-        Args:
-            assessments_file: Path to assessments JSON
-            model_name: Sentence transformer model
-        """
         self.assessments_file = assessments_file or ASSESSMENTS_FILE
         self.model_name = model_name
         
@@ -47,33 +38,23 @@ class EmbeddingRetriever:
         self._build_index()
     
     def _load_assessments(self):
-        """Load assessments from JSON."""
         with open(self.assessments_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        
         self.assessments = [Assessment.from_dict(item) for item in data]
         print(f"✅ Loaded {len(self.assessments)} assessments")
     
     def _build_index(self):
-        """Build FAISS index from assessment embeddings."""
         print("\nBuilding vector index...")
-        
-        # Generate embeddings for all assessments
         texts = [self._get_assessment_text(a) for a in self.assessments]
         embeddings = self.model.encode(texts, show_progress_bar=True)
-        
-        # Normalize embeddings for cosine similarity
         embeddings = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
         
-        # Build FAISS index
         dimension = embeddings.shape[1]
-        self.index = faiss.IndexFlatIP(dimension)  # Inner product = cosine similarity
+        self.index = faiss.IndexFlatIP(dimension)
         self.index.add(embeddings.astype('float32'))
-        
         print(f"✅ Vector index built with {self.index.ntotal} vectors")
     
     def _get_assessment_text(self, assessment: Assessment) -> str:
-        """Get searchable text for an assessment."""
         parts = [
             assessment.name,
             assessment.description,
@@ -82,32 +63,12 @@ class EmbeddingRetriever:
         ]
         return " ".join(parts)
     
-    def search(
-        self, 
-        query: str, 
-        num_results: int = 10
-    ) -> List[RecommendationResult]:
-        """
-        Search for relevant assessments using semantic similarity.
-        
-        Args:
-            query: Search query
-            num_results: Number of results to return
-            
-        Returns:
-            List of RecommendationResult objects
-        """
-        # Generate query embedding
+    def search(self, query: str, num_results: int = 10) -> List[RecommendationResult]:
         query_embedding = self.model.encode([query])
         query_embedding = query_embedding / np.linalg.norm(query_embedding)
         
-        # Search FAISS index
-        scores, indices = self.index.search(
-            query_embedding.astype('float32'), 
-            num_results
-        )
+        scores, indices = self.index.search(query_embedding.astype('float32'), num_results)
         
-        # Build results
         results = []
         for idx, score in zip(indices[0], scores[0]):
             if idx < len(self.assessments):
@@ -124,11 +85,12 @@ class EmbeddingRetriever:
 
 class HybridEmbeddingRetriever:
     """
-    Combines embedding-based search with TF-IDF for robust retrieval.
+    Optimized hybrid retriever with adaptive weighting.
     
     Strategy:
-    - Embedding-based search: 70% weight (semantic understanding)
-    - TF-IDF search: 30% weight (keyword matching)
+    - 🔥 NEW: Adaptive weighting based on query type
+    - Embedding: 60-75% (was 70% fixed)
+    - TF-IDF: 25-40% (was 30% fixed)
     """
     
     def __init__(self, assessments_file: Optional[str] = None):
@@ -138,11 +100,9 @@ class HybridEmbeddingRetriever:
         print("INITIALIZING HYBRID RETRIEVER")
         print("=" * 70)
         
-        # Embedding retriever (semantic)
         print("\n[1/2] Initializing Embedding Retriever...")
         self.embedding_retriever = EmbeddingRetriever(assessments_file)
         
-        # TF-IDF retriever (keyword)
         print("\n[2/2] Initializing TF-IDF Retriever...")
         self.tfidf_retriever = AssessmentSearchEngine()
         self.tfidf_retriever.load_assessments(assessments_file)
@@ -155,22 +115,32 @@ class HybridEmbeddingRetriever:
         self, 
         query: str, 
         num_results: int = 10,
-        embedding_weight: float = 0.7
+        embedding_weight: Optional[float] = None
     ) -> List[RecommendationResult]:
         """
-        Hybrid search combining embeddings and TF-IDF.
+        Hybrid search with adaptive weighting.
         
-        Args:
-            query: Search query
-            num_results: Number of results
-            embedding_weight: Weight for embedding scores (0-1)
-            
-        Returns:
-            Blended and ranked results
+        🔥 NEW: Auto-adjust weights based on query characteristics
         """
+        
+        # 🔥 Adaptive weighting logic
+        if embedding_weight is None:
+            query_lower = query.lower()
+            
+            # More specific queries (with technical terms) → higher TF-IDF weight
+            technical_terms = len([w for w in ['java', 'python', 'sql', 'excel', 'jira'] 
+                                  if w in query_lower])
+            
+            if technical_terms >= 2:
+                embedding_weight = 0.60  # More TF-IDF for technical queries
+            elif len(query.split()) < 10:
+                embedding_weight = 0.65  # Balanced for short queries
+            else:
+                embedding_weight = 0.75  # More embeddings for long descriptive queries
+        
         tfidf_weight = 1.0 - embedding_weight
         
-        # Get results from both retrievers
+        # Get results from both
         embedding_results = self.embedding_retriever.search(query, num_results * 2)
         
         from .query_analyzer import analyze_query
@@ -181,13 +151,11 @@ class HybridEmbeddingRetriever:
         scores = {}
         url_to_assessment = {}
         
-        # Add embedding scores
         for result in embedding_results:
             url = result.assessment.url
             scores[url] = scores.get(url, 0) + (result.score * embedding_weight)
             url_to_assessment[url] = result.assessment
         
-        # Add TF-IDF scores
         for result in tfidf_results:
             url = result.assessment.url
             scores[url] = scores.get(url, 0) + (result.score * tfidf_weight)
@@ -204,7 +172,7 @@ class HybridEmbeddingRetriever:
                 score=score,
                 match_reasons=[
                     f"Hybrid score: {score:.3f}",
-                    f"(Embedding: {embedding_weight*100:.0f}%, TF-IDF: {tfidf_weight*100:.0f}%)"
+                    f"(Emb: {embedding_weight*100:.0f}%, TF-IDF: {tfidf_weight*100:.0f}%)"
                 ]
             )
             final_results.append(result)
